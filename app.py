@@ -38,8 +38,8 @@ def process_video(video_url, is_audio, cookies_file=None):
         'quiet': True,
         'no_warnings': True,
         'nocheckcertificate': True,
-        'extractor_args': {
-            'youtube': {'player_client': ['tv', 'web_safari', 'mweb']}
+        'extractor_args': {'youtube': {'player_client': ['mweb', 'web']}},
+
         },
     }
 
