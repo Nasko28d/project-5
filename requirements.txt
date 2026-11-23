@@ -1,3 +1,2 @@
 streamlit
-yt-dlp
-bgutil-ytdlp-pot-provider
+yt-dlp[default]
