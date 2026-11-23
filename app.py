@@ -18,22 +18,29 @@ url = st.text_input(
 )
 format_choice = st.radio('Избери формат:', ['MP3 (Аудио)', 'MP4 (Видео)'])
 
-with st.expander('⚙️ Разширени настройки', expanded=False):
-    uploaded_cookies = st.file_uploader(
-        'Качи cookies.txt файл (по избор, Netscape формат)', type=['txt']
+with st.expander('⚙️ Cookies и разширени настройки', expanded=True):
+    cookie_source = st.selectbox(
+        'Откъде да се вземат cookies?',
+        ['Без cookies', 'Firefox', 'Chrome', 'Edge', 'Файл cookies.txt'],
+        index=1,
+        help='Трябва да си влязъл в YouTube в избрания браузър. '
+             'За Chrome/Edge затвори браузъра преди изтеглянето.',
     )
+    uploaded_cookies = None
+    if cookie_source == 'Файл cookies.txt':
+        uploaded_cookies = st.file_uploader(
+            'Качи cookies.txt (Netscape формат)', type=['txt']
+        )
     proxy = st.text_input(
         'Прокси (по избор)', placeholder='http://user:pass@host:port'
     )
 
-# Различни комбинации YouTube клиенти. Пробват се последователно,
-# докато някоя не мине без 403.
 CLIENT_SETS = [
-    None,  # настройки по подразбиране на yt-dlp
-    ['tv', 'web_safari'],
-    ['android_vr'],
+    None,
+    ['tv'],
+    ['web_safari'],
     ['mweb'],
-    ['web_embedded'],
+    ['android_vr'],
 ]
 
 VIDEO_EXTS = ('.mp4', '.mkv', '.webm')
@@ -45,21 +52,31 @@ MIME_TYPES = {
 }
 
 
-def build_opts(out_dir, is_audio, cookie_path, proxy_url, clients):
+def base_opts(cookie_source, cookie_path, proxy_url):
     opts = {
-        'outtmpl': os.path.join(out_dir, '%(title).150B.%(ext)s'),
         'quiet': True,
         'no_warnings': True,
         'noplaylist': True,
-        'retries': 5,
-        'fragment_retries': 5,
-        'http_chunk_size': 10 * 1024 * 1024,  # помага при някои 403
-        'js_runtimes': {'node': {}},
     }
-    if cookie_path:
+    if shutil.which('node'):
+        opts['js_runtimes'] = {'node': {}}
+    if cookie_source in ('Firefox', 'Chrome', 'Edge'):
+        opts['cookiesfrombrowser'] = (cookie_source.lower(),)
+    elif cookie_path:
         opts['cookiefile'] = cookie_path
     if proxy_url:
         opts['proxy'] = proxy_url
+    return opts
+
+
+def build_opts(out_dir, is_audio, cookie_source, cookie_path, proxy_url,
+               clients):
+    opts = base_opts(cookie_source, cookie_path, proxy_url)
+    opts.update({
+        'outtmpl': os.path.join(out_dir, '%(title).150B.%(ext)s'),
+        'retries': 5,
+        'fragment_retries': 5,
+    })
     if clients:
         opts['extractor_args'] = {'youtube': {'player_client': clients}}
 
@@ -88,32 +105,8 @@ def find_result(out_dir, is_audio):
     return None
 
 
-def list_formats(video_url, cookie_path, proxy_url):
-    """Диагностика: какви формати връща YouTube."""
-    opts = {
-        'quiet': True,
-        'no_warnings': True,
-        'noplaylist': True,
-        'ignore_no_formats_error': True,
-        'js_runtimes': {'node': {}},
-    }
-    if cookie_path:
-        opts['cookiefile'] = cookie_path
-    if proxy_url:
-        opts['proxy'] = proxy_url
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(video_url, download=False)
-    lines = []
-    for f in info.get('formats', []):
-        lines.append(
-            f"{f.get('format_id')} | {f.get('ext')} | "
-            f"{f.get('resolution') or 'audio'} | "
-            f"v:{f.get('vcodec')} a:{f.get('acodec')}"
-        )
-    return lines
-
-
-def process_video(video_url, is_audio, cookies_file, proxy_url, status):
+def process_video(video_url, is_audio, cookie_source, cookies_file,
+                  proxy_url, status):
     base_dir = tempfile.mkdtemp()
     cookie_path = None
     errors = []
@@ -132,9 +125,8 @@ def process_video(video_url, is_audio, cookies_file, proxy_url, status):
             os.makedirs(out_dir, exist_ok=True)
 
             try:
-                opts = build_opts(
-                    out_dir, is_audio, cookie_path, proxy_url, clients
-                )
+                opts = build_opts(out_dir, is_audio, cookie_source,
+                                  cookie_path, proxy_url, clients)
                 with yt_dlp.YoutubeDL(opts) as ydl:
                     ydl.extract_info(video_url, download=True)
 
@@ -154,17 +146,16 @@ def process_video(video_url, is_audio, cookies_file, proxy_url, status):
 if st.button('Подготви файла', type='primary'):
     if not url.strip():
         st.warning('Моля, въведи валиден YouTube линк.')
+    elif cookie_source == 'Файл cookies.txt' and uploaded_cookies is None:
+        st.warning('Качи cookies.txt или избери друг източник на cookies.')
     else:
         is_mp3 = format_choice.startswith('MP3')
         with st.status('Изтегляне и обработка... Моля, изчакай.',
                        expanded=True) as status:
             try:
                 file_bytes, file_name, errors = process_video(
-                    url.strip(),
-                    is_mp3,
-                    uploaded_cookies,
-                    proxy.strip() or None,
-                    status,
+                    url.strip(), is_mp3, cookie_source, uploaded_cookies,
+                    proxy.strip() or None, status,
                 )
             except Exception as e:
                 file_bytes, file_name, errors = None, None, [str(e)]
@@ -176,31 +167,14 @@ if st.button('Подготви файла', type='primary'):
 
         if file_bytes and file_name:
             ext = os.path.splitext(file_name)[1].lower()
-            mime_type = MIME_TYPES.get(ext, 'application/octet-stream')
             st.success(f'Готово! Файлът „{file_name}“ е подготвен.')
             st.download_button(
                 label='⬇️ Изтегли файла на устройството си',
                 data=file_bytes,
                 file_name=file_name,
-                mime=mime_type,
+                mime=MIME_TYPES.get(ext, 'application/octet-stream'),
             )
         else:
             st.error('Неуспешно генериране на файла. Всички опити се провалиха.')
             with st.expander('Подробности за грешките', expanded=True):
                 st.code('\n\n'.join(errors) or '(няма данни)')
-
-            # Диагностика на наличните формати
-            tmp = tempfile.mkdtemp()
-            try:
-                cpath = None
-                if uploaded_cookies is not None:
-                    cpath = os.path.join(tmp, 'cookies.txt')
-                    with open(cpath, 'wb') as f:
-                        f.write(uploaded_cookies.getbuffer())
-                formats = list_formats(url.strip(), cpath, proxy.strip() or None)
-                with st.expander(f'Формати, върнати от YouTube: {len(formats)}'):
-                    st.code('\n'.join(formats[:40]) or '(празен списък)')
-            except Exception as e:
-                st.info(f'Не успях да взема списъка с формати: {e}')
-            finally:
-                shutil.rmtree(tmp, ignore_errors=True)
