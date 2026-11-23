@@ -16,9 +16,9 @@ url = st.text_input(
 )
 format_choice = st.radio('Избери формат:', ['MP3 (Аудио)', 'MP4 (Видео)'])
 
-with st.expander('⚙️ Разширени настройки (ако дава грешка 403)', expanded=False):
+with st.expander('⚙️ Разширени настройки (cookies.txt)', expanded=False):
   uploaded_cookies = st.file_uploader(
-      'Качи cookies.txt файл (по избор)', type=['txt']
+      'Качи cookies.txt файл (ако сървърът е блокиран от YouTube)', type=['txt']
   )
 
 
@@ -37,7 +37,7 @@ def process_video(video_url, is_audio, cookies_file=None):
         'quiet': True,
         'no_warnings': True,
         'nocheckcertificate': True,
-        'extractor_args': {'youtube': {'player_client': ['mweb', 'web']}},
+        'ignoreerrors': False,
     }
 
     if cookie_path:
@@ -46,6 +46,7 @@ def process_video(video_url, is_audio, cookies_file=None):
     if is_audio:
       ydl_opts = {
           **common_opts,
+          # Взима най-доброто аудио или какъвто и да е комбиниран поток и извлича MP3
           'format': 'bestaudio/best',
           'postprocessors': [{
               'key': 'FFmpegExtractAudio',
@@ -56,6 +57,8 @@ def process_video(video_url, is_audio, cookies_file=None):
     else:
       ydl_opts = {
           **common_opts,
+          # Максимално гъвкав избор: комбиниран поток или видео+аудио, или каквото е налично
+          'format': 'bestvideo*+bestaudio/best',
           'merge_output_format': 'mp4',
       }
 
