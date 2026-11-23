@@ -12,100 +12,97 @@ st.title('🎬 YouTube Конвертор (MP3 / MP4)')
 st.write('Постави YouTube линк по-долу и избери желания формат.')
 
 url = st.text_input(
-    'YouTube URL:', placeholder='https://youtube.com...'
+    'YouTube URL:', placeholder='https://www.youtube.com/watch?v=...'
 )
 format_choice = st.radio('Избери формат:', ['MP3 (Аудио)', 'MP4 (Видео)'])
 
 with st.expander('⚙️ Разширени настройки (cookies.txt)', expanded=False):
-  uploaded_cookies = st.file_uploader(
-      'Качи cookies.txt файл (ако сървърът е блокиран от YouTube)', type=['txt']
-  )
+    uploaded_cookies = st.file_uploader(
+        'Качи cookies.txt файл (по избор)', type=['txt']
+    )
 
 
 def process_video(video_url, is_audio, cookies_file=None):
-  temp_dir = tempfile.mkdtemp()
-  cookie_path = None
+    temp_dir = tempfile.mkdtemp()
+    cookie_path = None
 
-  try:
-    if cookies_file is not None:
-      cookie_path = os.path.join(temp_dir, 'cookies.txt')
-      with open(cookie_path, 'wb') as f:
-        f.write(cookies_file.getbuffer())
+    try:
+        if cookies_file is not None:
+            cookie_path = os.path.join(temp_dir, 'cookies.txt')
+            with open(cookie_path, 'wb') as f:
+                f.write(cookies_file.getbuffer())
 
-    common_opts = {
-        'outtmpl': os.path.join(temp_dir, '%(title)s.%(ext)s'),
-        'quiet': True,
-        'no_warnings': True,
-        'nocheckcertificate': True,
-        'ignoreerrors': False,
-    }
+        common_opts = {
+            'outtmpl': os.path.join(temp_dir, '%(title).150B.%(ext)s'),
+            'quiet': True,
+            'no_warnings': True,
+            'noplaylist': True,
+        }
+        if cookie_path:
+            common_opts['cookiefile'] = cookie_path
 
-    if cookie_path:
-      common_opts['cookiefile'] = cookie_path
+        if is_audio:
+            ydl_opts = {
+                **common_opts,
+                'format': 'bestaudio/best',
+                'postprocessors': [{
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'mp3',
+                    'preferredquality': '192',
+                }],
+            }
+            wanted_ext = '.mp3'
+        else:
+            ydl_opts = {
+                **common_opts,
+                'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+                'merge_output_format': 'mp4',
+            }
+            wanted_ext = '.mp4'
 
-    if is_audio:
-      ydl_opts = {
-          **common_opts,
-          # Взима най-доброто аудио или какъвто и да е комбиниран поток и извлича MP3
-          'format': 'bestaudio/best',
-          'postprocessors': [{
-              'key': 'FFmpegExtractAudio',
-              'preferredcodec': 'mp3',
-              'preferredquality': '192',
-          }],
-      }
-    else:
-      ydl_opts = {
-          **common_opts,
-          # Максимално гъвкав избор: комбиниран поток или видео+аудио, или каквото е налично
-          'format': 'bestvideo*+bestaudio/best',
-          'merge_output_format': 'mp4',
-      }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.extract_info(video_url, download=True)
 
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-      ydl.extract_info(video_url, download=True)
+        downloaded_files = [
+            f for f in os.listdir(temp_dir)
+            if f.lower().endswith(wanted_ext)
+        ]
+        if not downloaded_files:
+            return None, None
 
-    downloaded_files = [
-        f for f in os.listdir(temp_dir) if f != 'cookies.txt'
-    ]
+        file_name = downloaded_files[0]
+        file_path = os.path.join(temp_dir, file_name)
 
-    if not downloaded_files:
-      return None, None
+        with open(file_path, 'rb') as f:
+            file_bytes = f.read()
 
-    file_name = downloaded_files
-    file_path = os.path.join(temp_dir, file_name)
+        return file_bytes, file_name
 
-    with open(file_path, 'rb') as f:
-      file_bytes = f.read()
-
-    return file_bytes, file_name
-
-  finally:
-    shutil.rmtree(temp_dir, ignore_errors=True)
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 if st.button('Подготви файла', type='primary'):
-  if not url.strip():
-    st.warning('Моля, въведи валиден YouTube линк.')
-  else:
-    with st.spinner('Изтегляне и обработка... Моля, изчакай.'):
-      try:
-        is_mp3 = format_choice.startswith('MP3')
-        file_bytes, file_name = process_video(
-            url.strip(), is_mp3, uploaded_cookies
-        )
+    if not url.strip():
+        st.warning('Моля, въведи валиден YouTube линк.')
+    else:
+        with st.spinner('Изтегляне и обработка... Моля, изчакай.'):
+            try:
+                is_mp3 = format_choice.startswith('MP3')
+                file_bytes, file_name = process_video(
+                    url.strip(), is_mp3, uploaded_cookies
+                )
 
-        if file_bytes and file_name:
-          mime_type = 'audio/mpeg' if is_mp3 else 'video/mp4'
-          st.success(f'Готово! Файлът „{file_name}“ е подготвен.')
-
-          st.download_button(
-              label='⬇️ Изтегли файла на устройството си',
-              data=file_bytes,
-              file_name=file_name,
-              mime=mime_type,
-          )
-        else:
-          st.error('Неуспешно генериране на файла.')
-      except Exception as e:
-        st.error(f'Възникна грешка: {e}')
+                if file_bytes and file_name:
+                    mime_type = 'audio/mpeg' if is_mp3 else 'video/mp4'
+                    st.success(f'Готово! Файлът „{file_name}“ е подготвен.')
+                    st.download_button(
+                        label='⬇️ Изтегли файла на устройството си',
+                        data=file_bytes,
+                        file_name=file_name,
+                        mime=mime_type,
+                    )
+                else:
+                    st.error('Неуспешно генериране на файла.')
+            except Exception as e:
+                st.error(f'Възникна грешка: {e}')
