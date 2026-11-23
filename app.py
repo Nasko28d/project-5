@@ -16,9 +16,9 @@ url = st.text_input(
 )
 format_choice = st.radio('Избери формат:', ['MP3 (Аудио)', 'MP4 (Видео)'])
 
-with st.expander('⚙️ Разширени настройки (ако дава грешка 403)', expanded=True):
+with st.expander('⚙️ Разширени настройки (ако дава грешка 403)', expanded=False):
   uploaded_cookies = st.file_uploader(
-      'Качи cookies.txt файл (препоръчително за онлайн версията)', type=['txt']
+      'Качи cookies.txt файл (по избор)', type=['txt']
   )
 
 
@@ -32,15 +32,12 @@ def process_video(video_url, is_audio, cookies_file=None):
       with open(cookie_path, 'wb') as f:
         f.write(cookies_file.getbuffer())
 
-    # Използваме tv и web_safari клиенти, защото работят с cookies без PO Token грешки
     common_opts = {
         'outtmpl': os.path.join(temp_dir, '%(title)s.%(ext)s'),
         'quiet': True,
         'no_warnings': True,
         'nocheckcertificate': True,
         'extractor_args': {'youtube': {'player_client': ['mweb', 'web']}},
-
-        },
     }
 
     if cookie_path:
@@ -57,7 +54,6 @@ def process_video(video_url, is_audio, cookies_file=None):
           }],
       }
     else:
-      # Без зададен 'format' yt-dlp автоматично взима най-доброто налично видео+аудио
       ydl_opts = {
           **common_opts,
           'merge_output_format': 'mp4',
