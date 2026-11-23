@@ -11,16 +11,14 @@ st.set_page_config(
 st.title('🎬 YouTube Конвертор (MP3 / MP4)')
 st.write('Постави YouTube линк по-долу и избери желания формат.')
 
-# Полета за въвеждане
 url = st.text_input(
     'YouTube URL:', placeholder='https://youtube.com...'
 )
 format_choice = st.radio('Избери формат:', ['MP3 (Аудио)', 'MP4 (Видео)'])
 
-# Опционално качване на cookies.txt при грешка 403
-with st.expander('⚙️ Разширени настройки (ако дава грешка 403)'):
+with st.expander('⚙️ Разширени настройки (ако дава грешка 403)', expanded=True):
   uploaded_cookies = st.file_uploader(
-      'Качи cookies.txt файл (по избор)', type=['txt']
+      'Качи cookies.txt файл (препоръчително за онлайн версията)', type=['txt']
   )
 
 
@@ -34,12 +32,15 @@ def process_video(video_url, is_audio, cookies_file=None):
       with open(cookie_path, 'wb') as f:
         f.write(cookies_file.getbuffer())
 
-    # Базови настройки (без android/ios ограничение, за да работят всички формати с cookies)
+    # Използваме tv и web_safari клиенти, защото работят с cookies без PO Token грешки
     common_opts = {
         'outtmpl': os.path.join(temp_dir, '%(title)s.%(ext)s'),
         'quiet': True,
         'no_warnings': True,
         'nocheckcertificate': True,
+        'extractor_args': {
+            'youtube': {'player_client': ['tv', 'web_safari', 'mweb']}
+        },
     }
 
     if cookie_path:
@@ -56,10 +57,9 @@ def process_video(video_url, is_audio, cookies_file=None):
           }],
       }
     else:
-      # Взима най-доброто налично видео и аудио и ги обединява в MP4 чрез FFmpeg
+      # Без зададен 'format' yt-dlp автоматично взима най-доброто налично видео+аудио
       ydl_opts = {
           **common_opts,
-          'format': 'bestvideo+bestaudio/best',
           'merge_output_format': 'mp4',
       }
 
@@ -85,7 +85,6 @@ def process_video(video_url, is_audio, cookies_file=None):
     shutil.rmtree(temp_dir, ignore_errors=True)
 
 
-# Бутон за стартиране
 if st.button('Подготви файла', type='primary'):
   if not url.strip():
     st.warning('Моля, въведи валиден YouTube линк.')
@@ -108,6 +107,6 @@ if st.button('Подготви файла', type='primary'):
               mime=mime_type,
           )
         else:
-          st.error('Неуспешно генериране на файла. Провери дали линкът е публичен.')
+          st.error('Неуспешно генериране на файла.')
       except Exception as e:
         st.error(f'Възникна грешка: {e}')
