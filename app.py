@@ -1,4 +1,5 @@
 import os
+import shutil
 import tempfile
 import streamlit as st
 import yt_dlp
@@ -16,64 +17,101 @@ url = st.text_input(
 )
 format_choice = st.radio('Избери формат:', ['MP3 (Аудио)', 'MP4 (Видео)'])
 
+# Опционално качване на cookies.txt при грешка 403
+with st.expander('⚙️ Разширени настройки (ако дава грешка 403)'):
+  uploaded_cookies = st.file_uploader(
+      'Качи cookies.txt файл (по избор)', type=['txt']
+  )
 
-def process_video(video_url, is_audio):
-  # Създаваме временна директория, за да не пълним сървъра с файлове
+
+def process_video(video_url, is_audio, cookies_file=None):
   temp_dir = tempfile.mkdtemp()
+  cookie_path = None
 
-  if is_audio:
-    ydl_opts = {
-        'format': 'bestaudio/best',
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '192',
-        }],
+  try:
+    # Ако потребителят е качил cookies.txt, запазваме го временно
+    if cookies_file is not None:
+      cookie_path = os.path.join(temp_dir, 'cookies.txt')
+      with open(cookie_path, 'wb') as f:
+        f.write(cookies_file.getbuffer())
+
+    # Базови настройки за yt-dlp
+    common_opts = {
         'outtmpl': os.path.join(temp_dir, '%(title)s.%(ext)s'),
         'quiet': True,
-    }
-  else:
-    ydl_opts = {
-        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-        'outtmpl': os.path.join(temp_dir, '%(title)s.%(ext)s'),
-        'quiet': True,
+        'no_warnings': True,
+        'nocheckcertificate': True,
+        'extractor_args': {'youtube': {'player_client': ['android', 'ios']}},
     }
 
-  with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-    info = ydl.extract_info(video_url, download=True)
-    # Намираме името на генерирания файл във временната папка
-    downloaded_files = os.listdir(temp_dir)
+    if cookie_path:
+      common_opts['cookiefile'] = cookie_path
+
+    if is_audio:
+      ydl_opts = {
+          **common_opts,
+          'format': 'bestaudio/best',
+          'postprocessors': [{
+              'key': 'FFmpegExtractAudio',
+              'preferredcodec': 'mp3',
+              'preferredquality': '192',
+          }],
+      }
+    else:
+      ydl_opts = {
+          **common_opts,
+          'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+          'merge_output_format': 'mp4',
+      }
+
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+      ydl.extract_info(video_url, download=True)
+
+    # Търсим генерирания медиен файл (игнорираме cookies.txt)
+    downloaded_files = [
+        f for f in os.listdir(temp_dir) if f != 'cookies.txt'
+    ]
+
     if not downloaded_files:
       return None, None
-    file_path = os.path.join(temp_dir, downloaded_files[0])
-    return file_path, downloaded_files[0]
+
+    file_name = downloaded_files[0]
+    file_path = os.path.join(temp_dir, file_name)
+
+    # Четем файла в паметта, за да можем да изтрием временната папка
+    with open(file_path, 'rb') as f:
+      file_bytes = f.read()
+
+    return file_bytes, file_name
+
+  finally:
+    # Винаги изтриваме временната папка, за да пазим RAM паметта на сървъра
+    shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 # Бутон за стартиране
 if st.button('Подготви файла', type='primary'):
-  if not url:
+  if not url.strip():
     st.warning('Моля, въведи валиден YouTube линк.')
   else:
-    with st.spinner('Обработка на видеото... Моля, изчакай.'):
+    with st.spinner('Изтегляне и обработка... Моля, изчакай.'):
       try:
         is_mp3 = format_choice.startswith('MP3')
-        file_path, file_name = process_video(url, is_mp3)
+        file_bytes, file_name = process_video(
+            url.strip(), is_mp3, uploaded_cookies
+        )
 
-        if file_path and os.path.exists(file_path):
-          with open(file_path, 'rb') as f:
-            file_bytes = f.read()
-
+        if file_bytes and file_name:
           mime_type = 'audio/mpeg' if is_mp3 else 'video/mp4'
-          st.success('Файлът е готов!')
+          st.success(f'Готово! Файлът „{file_name}“ е подготвен.')
 
-          # Бутон за реално сваляне от браузъра
           st.download_button(
-              label=f'⬇️ Изтегли {file_name}',
+              label='⬇️ Изтегли файла на устройството си',
               data=file_bytes,
               file_name=file_name,
               mime=mime_type,
           )
         else:
-          st.error('Неуспешно генериране на файла.')
+          st.error('Неуспешно генериране на файла. Провери дали линкът е публичен.')
       except Exception as e:
         st.error(f'Възникна грешка: {e}')
