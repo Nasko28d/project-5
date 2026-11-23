@@ -22,6 +22,22 @@ with st.expander('⚙️ Разширени настройки (cookies.txt)', e
     )
 
 
+def list_formats(video_url, base_opts):
+    """Връща кратък списък с наличните формати (за диагностика)."""
+    opts = {**base_opts, 'format': None, 'ignore_no_formats_error': True}
+    opts.pop('format')
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        info = ydl.extract_info(video_url, download=False)
+    lines = []
+    for f in info.get('formats', []):
+        lines.append(
+            f"{f.get('format_id')} | {f.get('ext')} | "
+            f"{f.get('resolution') or 'audio'} | "
+            f"v:{f.get('vcodec')} a:{f.get('acodec')}"
+        )
+    return lines
+
+
 def process_video(video_url, is_audio, cookies_file=None):
     temp_dir = tempfile.mkdtemp()
     cookie_path = None
@@ -37,6 +53,7 @@ def process_video(video_url, is_audio, cookies_file=None):
             'quiet': True,
             'no_warnings': True,
             'noplaylist': True,
+            'js_runtimes': {'node': {}},
         }
         if cookie_path:
             common_opts['cookiefile'] = cookie_path
@@ -55,13 +72,25 @@ def process_video(video_url, is_audio, cookies_file=None):
         else:
             ydl_opts = {
                 **common_opts,
-                'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+                'format': 'bv*+ba/b',
                 'merge_output_format': 'mp4',
             }
             wanted_ext = '.mp4'
 
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.extract_info(video_url, download=True)
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.extract_info(video_url, download=True)
+        except Exception as e:
+            # При грешка показваме какво реално връща YouTube
+            try:
+                formats = list_formats(video_url, common_opts)
+                st.error(f'Грешка при изтегляне: {e}')
+                st.write(f'Намерени формати: {len(formats)}')
+                st.code('\n'.join(formats[:30]) or '(празен списък)')
+            except Exception as e2:
+                st.error(f'Грешка при изтегляне: {e}')
+                st.error(f'Не успях и да взема списъка с формати: {e2}')
+            return None, None
 
         downloaded_files = [
             f for f in os.listdir(temp_dir)
