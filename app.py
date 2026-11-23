@@ -29,19 +29,17 @@ def process_video(video_url, is_audio, cookies_file=None):
   cookie_path = None
 
   try:
-    # Ако потребителят е качил cookies.txt, запазваме го временно
     if cookies_file is not None:
       cookie_path = os.path.join(temp_dir, 'cookies.txt')
       with open(cookie_path, 'wb') as f:
         f.write(cookies_file.getbuffer())
 
-    # Базови настройки за yt-dlp
+    # Базови настройки (без android/ios ограничение, за да работят всички формати с cookies)
     common_opts = {
         'outtmpl': os.path.join(temp_dir, '%(title)s.%(ext)s'),
         'quiet': True,
         'no_warnings': True,
         'nocheckcertificate': True,
-        'extractor_args': {'youtube': {'player_client': ['android', 'ios']}},
     }
 
     if cookie_path:
@@ -58,16 +56,16 @@ def process_video(video_url, is_audio, cookies_file=None):
           }],
       }
     else:
+      # Взима най-доброто налично видео и аудио и ги обединява в MP4 чрез FFmpeg
       ydl_opts = {
           **common_opts,
-          'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+          'format': 'bestvideo+bestaudio/best',
           'merge_output_format': 'mp4',
       }
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
       ydl.extract_info(video_url, download=True)
 
-    # Търсим генерирания медиен файл (игнорираме cookies.txt)
     downloaded_files = [
         f for f in os.listdir(temp_dir) if f != 'cookies.txt'
     ]
@@ -75,17 +73,15 @@ def process_video(video_url, is_audio, cookies_file=None):
     if not downloaded_files:
       return None, None
 
-    file_name = downloaded_files[0]
+    file_name = downloaded_files
     file_path = os.path.join(temp_dir, file_name)
 
-    # Четем файла в паметта, за да можем да изтрием временната папка
     with open(file_path, 'rb') as f:
       file_bytes = f.read()
 
     return file_bytes, file_name
 
   finally:
-    # Винаги изтриваме временната папка, за да пазим RAM паметта на сървъра
     shutil.rmtree(temp_dir, ignore_errors=True)
 
 
