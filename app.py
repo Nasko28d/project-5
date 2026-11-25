@@ -1,82 +1,86 @@
 import os
 import shutil
-import tempfile
+import time
+from pathlib import Path
 
 import streamlit as st
 import yt_dlp
 
-st.set_page_config(
-    page_title='YouTube към MP3/MP4', page_icon='🎬', layout='centered'
+st.set_page_config(page_title='YouTube Конвертор', page_icon='🎬', layout='centered')
+
+st.markdown(
+    """
+    <style>
+    .block-container {max-width: 760px; padding-top: 2rem;}
+    .stButton>button {width: 100%; border-radius: 10px; font-weight: 600;}
+    .title {font-size: 2.2rem; font-weight: 800; margin-bottom: 0;}
+    .sub {color: #888; margin-top: 0;}
+    </style>
+    """,
+    unsafe_allow_html=True,
 )
 
-st.title('🎬 YouTube Конвертор (MP3 / MP4)')
-st.write('Постави YouTube линк по-долу и избери желания формат.')
-st.caption(f'yt-dlp версия: {yt_dlp.version.__version__}')
+st.markdown('<p class="title">🎬 YouTube Конвертор</p>', unsafe_allow_html=True)
+st.markdown('<p class="sub">Свали видео (MP4) или аудио (MP3) с един клик.</p>',
+            unsafe_allow_html=True)
 
-url = st.text_input(
-    'YouTube URL:', placeholder='https://www.youtube.com/watch?v=...'
+DEFAULT_DIR = str(Path.home() / 'Downloads' / 'YouTube Конвертор')
+CLIENT_SETS = [None, ['tv'], ['web_safari'], ['mweb'], ['android_vr']]
+
+if 'history' not in st.session_state:
+    st.session_state.history = []
+
+# ---------- Вход ----------
+urls_text = st.text_area(
+    'Линк(ове) към YouTube',
+    placeholder='https://www.youtube.com/watch?v=...\n(по един линк на ред)',
+    height=100,
 )
-format_choice = st.radio('Избери формат:', ['MP3 (Аудио)', 'MP4 (Видео)'])
 
-with st.expander('⚙️ Cookies и разширени настройки', expanded=True):
+col1, col2 = st.columns(2)
+with col1:
+    fmt = st.radio('Формат', ['🎵 MP3 (аудио)', '🎥 MP4 (видео)'], horizontal=True)
+is_audio = fmt.startswith('🎵')
+with col2:
+    if is_audio:
+        quality = st.select_slider('Качество на звука (kbps)',
+                                   options=[128, 192, 256, 320], value=192)
+    else:
+        quality = st.select_slider('Макс. резолюция',
+                                   options=[360, 480, 720, 1080, 1440, 2160],
+                                   value=1080)
+
+with st.expander('⚙️ Настройки'):
+    out_dir = st.text_input('Папка за запис', DEFAULT_DIR)
     cookie_source = st.selectbox(
-        'Откъде да се вземат cookies?',
-        ['Без cookies', 'Firefox', 'Chrome', 'Edge', 'Файл cookies.txt'],
-        index=1,
-        help='Трябва да си влязъл в YouTube в избрания браузър. '
-             'За Chrome/Edge затвори браузъра преди изтеглянето.',
+        'Cookies от браузър (помага срещу блокиране)',
+        ['Edge', 'Chrome', 'Firefox', 'Файл cookies.txt', 'Без cookies'],
+        help='Трябва да си влязъл в YouTube в този браузър. '
+             'За Chrome/Edge затвори браузъра преди изтегляне.',
     )
-    uploaded_cookies = None
+    cookies_upload = None
     if cookie_source == 'Файл cookies.txt':
-        uploaded_cookies = st.file_uploader(
-            'Качи cookies.txt (Netscape формат)', type=['txt']
-        )
-    proxy = st.text_input(
-        'Прокси (по избор)', placeholder='http://user:pass@host:port'
-    )
-
-CLIENT_SETS = [
-    None,
-    ['tv'],
-    ['web_safari'],
-    ['mweb'],
-    ['android_vr'],
-]
-
-VIDEO_EXTS = ('.mp4', '.mkv', '.webm')
-MIME_TYPES = {
-    '.mp3': 'audio/mpeg',
-    '.mp4': 'video/mp4',
-    '.mkv': 'video/x-matroska',
-    '.webm': 'video/webm',
-}
+        cookies_upload = st.file_uploader('cookies.txt', type=['txt'])
+    st.caption(f'yt-dlp версия: {yt_dlp.version.__version__}')
 
 
-def base_opts(cookie_source, cookie_path, proxy_url):
+# ---------- Логика ----------
+def build_opts(folder, cookie_path, clients, hook):
     opts = {
+        'outtmpl': os.path.join(folder, '%(title).150B.%(ext)s'),
+        'noplaylist': True,
         'quiet': True,
         'no_warnings': True,
-        'noplaylist': True,
+        'retries': 5,
+        'fragment_retries': 5,
+        'progress_hooks': [hook],
     }
     if shutil.which('node'):
         opts['js_runtimes'] = {'node': {}}
-    if cookie_source in ('Firefox', 'Chrome', 'Edge'):
+    if cookie_source in ('Edge', 'Chrome', 'Firefox'):
         opts['cookiesfrombrowser'] = (cookie_source.lower(),)
     elif cookie_path:
         opts['cookiefile'] = cookie_path
-    if proxy_url:
-        opts['proxy'] = proxy_url
-    return opts
-
-
-def build_opts(out_dir, is_audio, cookie_source, cookie_path, proxy_url,
-               clients):
-    opts = base_opts(cookie_source, cookie_path, proxy_url)
-    opts.update({
-        'outtmpl': os.path.join(out_dir, '%(title).150B.%(ext)s'),
-        'retries': 5,
-        'fragment_retries': 5,
-    })
     if clients:
         opts['extractor_args'] = {'youtube': {'player_client': clients}}
 
@@ -85,96 +89,93 @@ def build_opts(out_dir, is_audio, cookie_source, cookie_path, proxy_url,
         opts['postprocessors'] = [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
-            'preferredquality': '192',
+            'preferredquality': str(quality),
         }]
     else:
+        h = quality
         opts['format'] = (
-            'bv*[vcodec^=avc1]+ba[acodec^=mp4a]/'
-            'bv*[ext=mp4]+ba[ext=m4a]/'
-            'bv*+ba/b'
+            f'bv*[height<={h}][vcodec^=avc1]+ba[acodec^=mp4a]/'
+            f'bv*[height<={h}]+ba/b[height<={h}]/b'
         )
         opts['merge_output_format'] = 'mp4'
     return opts
 
 
-def find_result(out_dir, is_audio):
-    exts = ('.mp3',) if is_audio else VIDEO_EXTS
-    for name in sorted(os.listdir(out_dir)):
-        if name.lower().endswith(exts):
-            return name
-    return None
+def download_one(url, folder, cookie_path, bar, label):
+    def hook(d):
+        if d['status'] == 'downloading':
+            total = d.get('total_bytes') or d.get('total_bytes_estimate')
+            if total:
+                pct = min(d['downloaded_bytes'] / total, 1.0)
+                speed = d.get('speed') or 0
+                bar.progress(pct, text=f'{label}: {pct * 100:.0f}% '
+                                       f'({speed / 1_048_576:.1f} MB/s)')
+        elif d['status'] == 'finished':
+            bar.progress(1.0, text=f'{label}: обработка...')
 
-
-def process_video(video_url, is_audio, cookie_source, cookies_file,
-                  proxy_url, status):
-    base_dir = tempfile.mkdtemp()
-    cookie_path = None
     errors = []
-
-    try:
-        if cookies_file is not None:
-            cookie_path = os.path.join(base_dir, 'cookies.txt')
-            with open(cookie_path, 'wb') as f:
-                f.write(cookies_file.getbuffer())
-
-        for i, clients in enumerate(CLIENT_SETS):
-            label = ', '.join(clients) if clients else 'по подразбиране'
-            status.write(f'Опит {i + 1}/{len(CLIENT_SETS)}: клиент {label}...')
-
-            out_dir = os.path.join(base_dir, f'try_{i}')
-            os.makedirs(out_dir, exist_ok=True)
-
+    for clients in CLIENT_SETS:
+        try:
+            started = time.time()
+            with yt_dlp.YoutubeDL(build_opts(folder, cookie_path, clients, hook)) as ydl:
+                info = ydl.extract_info(url, download=True)
+            path = None
             try:
-                opts = build_opts(out_dir, is_audio, cookie_source,
-                                  cookie_path, proxy_url, clients)
-                with yt_dlp.YoutubeDL(opts) as ydl:
-                    ydl.extract_info(video_url, download=True)
-
-                file_name = find_result(out_dir, is_audio)
-                if file_name:
-                    with open(os.path.join(out_dir, file_name), 'rb') as f:
-                        return f.read(), file_name, errors
-                errors.append(f'[{label}] Не е създаден изходен файл.')
-            except Exception as e:
-                errors.append(f'[{label}] {e}')
-
-        return None, None, errors
-    finally:
-        shutil.rmtree(base_dir, ignore_errors=True)
+                path = info['requested_downloads'][0]['filepath']
+            except Exception:
+                files = [p for p in Path(folder).glob('*') if p.stat().st_mtime >= started]
+                if files:
+                    path = str(max(files, key=lambda p: p.stat().st_mtime))
+            return info, path, errors
+        except Exception as e:
+            errors.append(f"[{', '.join(clients) if clients else 'по подразбиране'}] {e}")
+    return None, None, errors
 
 
-if st.button('Подготви файла', type='primary'):
-    if not url.strip():
-        st.warning('Моля, въведи валиден YouTube линк.')
-    elif cookie_source == 'Файл cookies.txt' and uploaded_cookies is None:
-        st.warning('Качи cookies.txt или избери друг източник на cookies.')
+# ---------- Бутон ----------
+if st.button('⬇️ Свали', type='primary'):
+    urls = [u.strip() for u in urls_text.splitlines() if u.strip()]
+    if not urls:
+        st.warning('Въведи поне един линк.')
+    elif cookie_source == 'Файл cookies.txt' and cookies_upload is None:
+        st.warning('Качи cookies.txt или избери друг източник.')
     else:
-        is_mp3 = format_choice.startswith('MP3')
-        with st.status('Изтегляне и обработка... Моля, изчакай.',
-                       expanded=True) as status:
-            try:
-                file_bytes, file_name, errors = process_video(
-                    url.strip(), is_mp3, cookie_source, uploaded_cookies,
-                    proxy.strip() or None, status,
-                )
-            except Exception as e:
-                file_bytes, file_name, errors = None, None, [str(e)]
+        os.makedirs(out_dir, exist_ok=True)
+        cookie_path = None
+        if cookies_upload is not None:
+            cookie_path = os.path.join(out_dir, '.cookies_tmp.txt')
+            with open(cookie_path, 'wb') as f:
+                f.write(cookies_upload.getbuffer())
 
-            if file_bytes and file_name:
-                status.update(label='Готово!', state='complete')
-            else:
-                status.update(label='Неуспешно', state='error')
+        try:
+            for i, url in enumerate(urls, 1):
+                label = f'{i}/{len(urls)}'
+                bar = st.progress(0.0, text=f'{label}: стартиране...')
+                info, path, errors = download_one(url, out_dir, cookie_path, bar, label)
+                if path:
+                    bar.progress(1.0, text=f'{label}: готово ✅')
+                    c1, c2 = st.columns([1, 3])
+                    if info and info.get('thumbnail'):
+                        c1.image(info['thumbnail'])
+                    c2.success(f"**{info.get('title', os.path.basename(path))}**")
+                    c2.caption(path)
+                    st.session_state.history.append(path)
+                else:
+                    bar.progress(1.0, text=f'{label}: неуспешно ❌')
+                    st.error(f'Неуспех за: {url}')
+                    with st.expander('Подробности за грешката'):
+                        st.code('\n\n'.join(errors))
+        finally:
+            if cookie_path and os.path.exists(cookie_path):
+                os.remove(cookie_path)
 
-        if file_bytes and file_name:
-            ext = os.path.splitext(file_name)[1].lower()
-            st.success(f'Готово! Файлът „{file_name}“ е подготвен.')
-            st.download_button(
-                label='⬇️ Изтегли файла на устройството си',
-                data=file_bytes,
-                file_name=file_name,
-                mime=MIME_TYPES.get(ext, 'application/octet-stream'),
-            )
-        else:
-            st.error('Неуспешно генериране на файла. Всички опити се провалиха.')
-            with st.expander('Подробности за грешките', expanded=True):
-                st.code('\n\n'.join(errors) or '(няма данни)')
+# ---------- Папка и история ----------
+if st.session_state.history:
+    st.divider()
+    st.subheader('Свалени в тази сесия')
+    for p in reversed(st.session_state.history):
+        st.write('•', os.path.basename(p))
+
+if os.path.isdir(out_dir) and hasattr(os, 'startfile'):
+    if st.button('📂 Отвори папката със свалените файлове'):
+        os.startfile(out_dir)
